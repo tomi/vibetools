@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flatted JSON Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    #header {
+      flex-shrink: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 16px;
+      background: #252526;
+      border-bottom: 1px solid #404040;
+      min-height: 38px;
+    }
+
+    #title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #cccccc;
+      white-space: nowrap;
+    }
+
+    #status {
+      font-size: 12px;
+      color: #999999;
+      text-align: right;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #status.error {
+      color: #f48771;
+    }
+
+    #status.success {
+      color: #89d185;
+    }
+
+    #status.processing {
+      color: #cca700;
+    }
+
+    #editor-container {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+
+    /* Placeholder shown when editor is empty */
+    #placeholder {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    #placeholder-text {
+      text-align: center;
+      color: #555555;
+      font-size: 15px;
+      line-height: 1.8;
+      user-select: none;
+    }
+
+    #placeholder-text strong {
+      display: block;
+      font-size: 22px;
+      font-weight: 600;
+      color: #666666;
+      margin-bottom: 8px;
+    }
+
+    #placeholder-text kbd {
+      display: inline-block;
+      padding: 2px 7px;
+      border: 1px solid #555;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+      color: #888;
+      background: #2d2d2d;
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <span id="title">📋 Flatted JSON Viewer</span>
+    <span id="status">Ready — paste flatted or standard JSON</span>
+  </div>
+
+  <div id="editor-container">
+    <div id="placeholder">
+      <div id="placeholder-text">
+        <strong>Flatted JSON Viewer</strong>
+        Paste JSON with <kbd>Ctrl+V</kbd> / <kbd>Cmd+V</kbd><br/>
+        Supports <em>flatted</em> (circular) and standard JSON.<br/>
+        Handles megabyte-sized inputs.
+      </div>
+    </div>
+  </div>
+
+  <!-- Flatted: circular-safe JSON parser -->
+  <script src="https://cdn.jsdelivr.net/npm/flatted@3.3.1/min.js"></script>
+
+  <!-- Monaco Editor AMD loader -->
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+
+  <script>
+    require.config({
+      paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }
+    });
+
+    /**
+     * JSON.stringify that replaces circular references with the string "[Circular]"
+     * instead of throwing. This is needed when flatted-parsed objects contain
+     * actual circular object references.
+     */
+    function safeStringify(value, indent) {
+      var seen = new WeakSet();
+      return JSON.stringify(value, function (key, val) {
+        if (typeof val === 'object' && val !== null) {
+          if (seen.has(val)) return '[Circular]';
+          seen.add(val);
+        }
+        return val;
+      }, indent);
+    }
+
+    require(['vs/editor/editor.main'], function () {
+      var statusEl = document.getElementById('status');
+      var placeholderEl = document.getElementById('placeholder');
+
+      var editor = monaco.editor.create(document.getElementById('editor-container'), {
+        value: '',
+        language: 'json',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        fontSize: 13,
+        lineNumbers: 'on',
+        wordWrap: 'off',
+        minimap: { enabled: true },
+        scrollBeyondLastLine: false,
+        renderWhitespace: 'none',
+        tabSize: 2,
+        // Monaco automatically applies large-file optimisations (disabling
+        // tokenisation etc.) for files over ~2 MB, keeping the editor fast.
+        largeFileOptimizations: true,
+      });
+
+      function setStatus(text, type) {
+        statusEl.textContent = text;
+        statusEl.className = type || '';
+      }
+
+      function formatSize(bytes) {
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
+        if (bytes >= 1024)    return (bytes / 1024).toFixed(1) + ' KB';
+        return bytes + ' B';
+      }
+
+      function updatePlaceholder() {
+        var isEmpty = editor.getModel().getValueLength() === 0;
+        placeholderEl.style.display = isEmpty ? 'flex' : 'none';
+      }
+
+      editor.onDidChangeModelContent(updatePlaceholder);
+      updatePlaceholder();
+
+      // Intercept paste through the hidden textarea Monaco uses for keyboard input.
+      // Using capture phase (true) so we get the event before Monaco handles it.
+      var textArea = editor.getDomNode().querySelector('textarea');
+      if (textArea) {
+        textArea.addEventListener('paste', function (e) {
+          var text = e.clipboardData && e.clipboardData.getData('text/plain');
+          if (!text) return;
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          setStatus('Processing…', 'processing');
+
+          // Yield to let the browser paint the status before heavy work.
+          setTimeout(function () {
+            var result = text;
+            var msg = '';
+            var statusType = '';
+
+            try {
+              // Try flatted first (handles circular-reference encoded JSON).
+              var parsed = Flatted.parse(text);
+              result = safeStringify(parsed, 2);
+              msg = '✓ Parsed as flatted JSON';
+              statusType = 'success';
+            } catch (err1) {
+              try {
+                // Fallback: plain JSON.
+                var parsed2 = JSON.parse(text);
+                result = JSON.stringify(parsed2, null, 2);
+                msg = '✓ Parsed as standard JSON';
+                statusType = 'success';
+              } catch (err2) {
+                // Not valid JSON — display verbatim.
+                msg = '⚠ Not valid JSON — displayed as plain text';
+                statusType = 'error';
+              }
+            }
+
+            var sizeLabel = formatSize(result.length);
+            setStatus(msg + ' · ' + sizeLabel, statusType);
+
+            // Replace entire document content in one atomic edit.
+            editor.getModel().setValue(result);
+            editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 });
+          }, 10);
+        }, true);
+      }
+    });
+  </script>
+</body>
+</html>
