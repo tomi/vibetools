@@ -192,54 +192,51 @@
       editor.onDidChangeModelContent(updatePlaceholder);
       updatePlaceholder();
 
-      // Intercept paste through the hidden textarea Monaco uses for keyboard input.
-      // Using capture phase (true) so we get the event before Monaco handles it.
-      var textArea = editor.getDomNode().querySelector('textarea');
-      if (textArea) {
-        textArea.addEventListener('paste', function (e) {
-          var text = e.clipboardData && e.clipboardData.getData('text/plain');
-          if (!text) return;
+      function processAndDisplay(text) {
+        setStatus('Processing…', 'processing');
 
-          e.preventDefault();
-          e.stopPropagation();
+        setTimeout(function () {
+          var result = text;
+          var msg = '';
+          var statusType = '';
 
-          setStatus('Processing…', 'processing');
-
-          // Yield to let the browser paint the status before heavy work.
-          setTimeout(function () {
-            var result = text;
-            var msg = '';
-            var statusType = '';
-
+          try {
+            // Try flatted first (handles circular-reference encoded JSON).
+            var parsed = Flatted.parse(text);
+            result = safeStringify(parsed, 2);
+            msg = '✓ Parsed as flatted JSON';
+            statusType = 'success';
+          } catch (err1) {
             try {
-              // Try flatted first (handles circular-reference encoded JSON).
-              var parsed = Flatted.parse(text);
-              result = safeStringify(parsed, 2);
-              msg = '✓ Parsed as flatted JSON';
+              // Fallback: plain JSON.
+              var parsed2 = JSON.parse(text);
+              result = JSON.stringify(parsed2, null, 2);
+              msg = '✓ Parsed as standard JSON';
               statusType = 'success';
-            } catch (err1) {
-              try {
-                // Fallback: plain JSON.
-                var parsed2 = JSON.parse(text);
-                result = JSON.stringify(parsed2, null, 2);
-                msg = '✓ Parsed as standard JSON';
-                statusType = 'success';
-              } catch (err2) {
-                // Not valid JSON — display verbatim.
-                msg = '⚠ Not valid JSON — displayed as plain text';
-                statusType = 'error';
-              }
+            } catch (err2) {
+              // Not valid JSON — display verbatim.
+              msg = '⚠ Not valid JSON — displayed as plain text';
+              statusType = 'error';
             }
+          }
 
-            var sizeLabel = formatSize(result.length);
-            setStatus(msg + ' · ' + sizeLabel, statusType);
+          var sizeLabel = formatSize(result.length);
+          setStatus(msg + ' · ' + sizeLabel, statusType);
 
-            // Replace entire document content in one atomic edit.
-            editor.getModel().setValue(result);
-            editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 });
-          }, 10);
-        }, true);
+          editor.getModel().setValue(result);
+          editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 });
+        }, 10);
       }
+
+      // Override Cmd/Ctrl+V at the keybinding level so Monaco never does its
+      // own paste. Instead we read from the clipboard API and process.
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, function () {
+        navigator.clipboard.readText().then(function (text) {
+          if (text) processAndDisplay(text);
+        }).catch(function () {
+          setStatus('⚠ Clipboard access denied — allow it in your browser', 'error');
+        });
+      });
     });
   </script>
 </body>
