@@ -1,0 +1,18 @@
+flatted-viewer/index.html
+  h_8fb27e0cdf6d1e 1-243
+package.json
+  h_8fb27e0cdf6d1e 1-12
+pnpm-lock.yaml
+  h_8fb27e0cdf6d1e 1-637
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77f287a7d9b378ad2db42ec88c65c24b7e0f29e3",
+  "prompts": {},
+  "humans": {
+    "h_8fb27e0cdf6d1e": {
+      "author": "Tomi Turtiainen <10324676+tomi@users.noreply.github.com>"
+    }
+  }
+}
